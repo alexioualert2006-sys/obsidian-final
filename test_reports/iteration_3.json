@@ -1,0 +1,36 @@
+{
+  "summary": "Re-verified the two fixes since iteration_2: (a) per-IP rate limit on POST /api/briefs now correctly keys on X-Forwarded-For via custom _client_key(), and (b) Resend transactional email gracefully no-ops when RESEND_API_KEY is empty. Backend pytest is now 8/8 passing (was 5/6). Frontend smoke regression all green: hero/work/approach/why/contact/footer all present, /work/lumiere-atelier renders 'Lumière Atelier', Submit-Another-Brief reset flow (fill → 200 → success → reset → empty) works end-to-end.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Contact section (desktop 1440x900)", "issues": ["The 'Made with Emergent' fixed badge in the bottom-right viewport overlaps the bottom-right corner of the Submit Brief button. Real users can still hit the button (the badge does not cover the button label), but it is visually close — worth tightening the right-padding on the submit row or lowering the badge z-order. Not a blocker."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_briefs.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py _client_key(): correct shape — reads X-Forwarded-For left-most untrusted hop, falls back to X-Real-IP, then get_remote_address. This is the standard SlowAPI-behind-ingress pattern; verified working: 6 POSTs with X-Forwarded-For: 203.0.113.77 yielded [200,200,200,200,200,429], and a 7th POST with X-Forwarded-For: 198.51.100.55 still returned 200 (per-IP bucket, not global).",
+    "server.py _send_brief_notification(): correctly registered via BackgroundTasks.add_task AFTER `await db.briefs.insert_one(doc)`, so the brief is persisted before the notification ever fires. The handler is wrapped in try/except so a Resend failure cannot affect the 200 response. With RESEND_API_KEY='' it logs the exact line 'Resend disabled (RESEND_API_KEY missing) — skipping notification for brief <8-char-id>' (confirmed in backend supervisor logs for multiple brief ids including b2735307 from the UI smoke test).",
+    "server.py is now 436 LOC — still well under the 700 LOC threshold. No DRY violations, no sync IO in the request path, no mongo _id leakage (all reads use projection {'_id': 0}).",
+    "server.py: deprecated @app.on_event('startup'/'shutdown') still used — same observation as iteration_2; works today but lifespan handlers are the long-term fix. Non-blocking.",
+    "Optional hardening: _client_key currently trusts X-Forwarded-For unconditionally. Behind a known k8s ingress this is fine, but if the backend is ever exposed directly an attacker could spoof per-IP buckets. If hardening is desired, restrict trust to a known set of proxy IPs (uvicorn --forwarded-allow-ips)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_briefs.py"
+  ],
+  "success_rate": {"backend": "100% (8/8 pytest)", "frontend": "100% (all smoke flows passed)"},
+  "test_credentials": "None required (no auth).",
+  "seed_data_creation": "Pytest + UI smoke inserted ~10 TEST_-prefixed briefs (TEST_RateLimit x5 successful + 1 x 429, TEST_RateLimit 'other' on 198.51.100.55, TEST_ResendNoOp, TEST_UISmoke, TEST_FirstBrief). Projects collection auto-seeded by backend startup — 5 expected slugs present.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Pytest at /app/backend/tests/test_briefs.py now uses per-class X-Forwarded-For headers so the rate-limit bucket is isolated: TestBriefsValidation uses 192.0.2.31, TestBriefsRateLimit uses 203.0.113.77 (burst) + 198.51.100.55 (other-IP), TestResendNoOp uses 192.0.2.99. If you re-run the rate-limit test within the same hour AND the backend process has not restarted, the burst bucket for 203.0.113.77 is already consumed (5/hour), so the test will see 429 on the FIRST request — bump XFF_BURST to a fresh literal (e.g. 203.0.113.78) before re-running, or restart the backend to reset SlowAPI's in-memory buckets. Frontend Submit button can be clipped by the fixed Emergent badge in Playwright at 1440x900 — use page.evaluate to call form.requestSubmit() instead of clicking the button if you hit that. Resend disabled log line format (verbatim, en-dash and trailing 8-char id) is: 'Resend disabled (RESEND_API_KEY missing) — skipping notification for brief <id8>'.",
+  "rca of the issue": "Iteration_2's rate-limit failure root cause (SlowAPI keying on the ingress pod IP and round-robining between two ingress pods) is resolved by the new custom key_func _client_key(request) which reads X-Forwarded-For first. Verified by reproducing the original failure shape — 6 POSTs from the same external IP — and observing the expected [200×5, 429] sequence. A second POST from a different X-Forwarded-For still returns 200, proving the bucket is per-real-IP rather than global. The Resend BackgroundTask is correctly ordered after the await on the insert, so the contract 'brief always persists, notification is fire-and-forget' holds even if the notification raised."
+}

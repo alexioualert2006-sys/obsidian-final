@@ -1,0 +1,42 @@
+{
+  "summary": "Tested all P2 enhancements: Pydantic EmailStr, per-IP rate limit on POST /api/briefs, /api/projects list+detail+404, Submit Another Brief reset flow, scroll-linked hero crystal, framer-motion page transitions, and full landing regression. 5/6 backend pytests pass. All frontend flows pass. ONE backend defect: SlowAPI rate-limit (5/hour) does NOT enforce behind the Kubernetes ingress because get_remote_address returns the ingress pod IP, and multiple ingress pods round-robin requests (observed 10.219.0.102 and 10.219.0.103 alternating), splitting the bucket so 6 quick POSTs all return 200.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/briefs",
+        "issue": "Rate limit 5/hour does not enforce. Six valid POSTs from the same test client all returned 200 (statuses=[200,200,200,200,200,200]). Backend log shows requests arriving from rotating ingress pod IPs (10.219.0.102 and 10.219.0.103) — slowapi.util.get_remote_address reads request.client.host, which is the ingress pod IP, so the 5/hour bucket is split across pods and never reached.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_briefs.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Fix per-IP rate limit so it survives the Kubernetes ingress. Two viable approaches: (a) define a custom key_func that reads X-Forwarded-For (right-most untrusted hop) before falling back to request.client.host — e.g. `def real_ip(request): xff = request.headers.get('x-forwarded-for'); return xff.split(',')[0].strip() if xff else get_remote_address(request)` and pass it as Limiter(key_func=real_ip); (b) install Starlette's ProxyHeadersMiddleware (or uvicorn --proxy-headers + --forwarded-allow-ips='*') so request.client.host already reflects the real client. Re-run the rate-limit test after the fix.",
+    "Optional cleanup: TestBriefsRateLimit currently asserts statuses[-1] == 429; once the fix lands, the test will pass without further changes."
+  ],
+  "critical_code_review_comments": [
+    "server.py: SlowAPI's default get_remote_address is unsafe behind a reverse proxy / k8s ingress — it keys on the ingress pod IP, which (a) defeats per-user rate limiting and (b) round-robins between ingress pods, making the bucket effectively N× the configured limit where N = ingress pod count.",
+    "server.py: app.on_event('startup'/'shutdown') is deprecated in newer FastAPI versions in favour of lifespan handlers — works today but worth noting.",
+    "CaseStudy.jsx: when next_slug is missing, the next button label still renders an empty heading; consider hiding the Next block entirely when next_slug is falsy.",
+    "All other files remain under 700 LOC. data-testid coverage continues to be excellent."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_briefs.py"
+  ],
+  "success_rate": {"backend": "83% (5/6)", "frontend": "100% (all flows passed)"},
+  "test_credentials": "None required (no auth).",
+  "seed_data_creation": "Pytest and UI tests together inserted ~9 TEST_-prefixed briefs into the MongoDB briefs collection (TEST_RateLimit x6, TEST_FirstBrief, TEST_SecondBrief, plus prior TEST_BadEmail rejected before insert). Projects collection is auto-seeded by backend startup (idempotent upsert by slug) and currently holds the 5 expected projects.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend pytest lives at /app/backend/tests/test_briefs.py and now covers: health, /api/projects list (5 items, sorted by index, all required fields), GET /api/projects/{slug} happy path + 404, EmailStr 422 (Pydantic v2 detail array with loc=['body','email']), and rate-limit burst (6 requests, last must be 429). The rate-limit test is the only failing test and will keep failing until the key_func is fixed to read X-Forwarded-For. NOTE: once fixed, any retry of this test consumes the 5/hour bucket — so retest from a fresh IP/hour or use the SlowAPI test-mode disable to reset. Frontend Submit-Another-Brief flow uses two distinct emails (first@/second@) to avoid form-side collisions; the @ is built via chr(64) to dodge shell mangling. The hero canvas at /, viewport 1440×900: top moves from ~48.5 → ~-401.5 when scrolling to 0.5vh, with no console errors and dimensions unchanged.",
+  "rca of the issue": "Root cause for the rate-limit failure: slowapi's get_remote_address returns starlette's request.client.host, which inside this k8s deployment is the *ingress controller pod* IP (we observed 10.219.0.102 and 10.219.0.103 in backend access logs alternating across requests from the same external client). With two ingress pods round-robining, the per-IP bucket is effectively duplicated — each pod's bucket only sees ~3 of the 6 requests, well under the limit. Reproduction: `for i in 1..6 do curl -X POST .../api/briefs -d '<valid>'; done` from one shell — all return 200. Mitigation: use a custom key_func that prefers X-Forwarded-For (the ingress already sets it), or enable ProxyHeaders so request.client.host reflects the real client. After the fix, the 6th request from the same external IP should return 429 with body {'detail':'Rate limit exceeded: 5 per 1 hour'}."
+}
