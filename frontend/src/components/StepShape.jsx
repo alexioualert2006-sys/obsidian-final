@@ -1,4 +1,4 @@
-import React, { useMemo, useRef } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Environment, Lightformer } from "@react-three/drei";
 import * as THREE from "three";
@@ -87,11 +87,6 @@ function buildMiniShard() {
 }
 
 function VariantGeometry({ variant }) {
-  // Returns a Three geometry instance for the chosen variant.
-  // Discover  → tetrahedron (4 facets)
-  // Design    → octahedron (8 facets, design "diamond")
-  // Build     → icosahedron (faceted core)
-  // Launch    → mini upward shard (echo of hero crystal)
   const geom = useMemo(() => {
     switch (variant) {
       case "tetra":
@@ -110,11 +105,11 @@ function VariantGeometry({ variant }) {
 
 function StepMesh({ variant }) {
   const groupRef = useRef();
+  const lightRef = useRef();
   const fresnelMat = useFresnelMaterial("#8B5CF6", 2.4, 1.7);
   const { pointer } = useThree();
   const target = useRef({ x: 0, y: 0 });
 
-  // Slight static rotation offset so each variant catches light differently
   const baseRot = useMemo(() => {
     switch (variant) {
       case "tetra":
@@ -128,22 +123,102 @@ function StepMesh({ variant }) {
     }
   }, [variant]);
 
-  // Rotation speed varies subtly per variant for cinematic life
   const speed = variant === "shard" ? 0.18 : 0.22;
+
+  // --- Interactivity (grab + spin, hover glow) — same feel as the hero ---
+  const [hovered, setHovered] = useState(false);
+  const hoverF = useRef(0);
+  const velY = useRef(0);
+  const velX = useRef(0);
+  const dragging = useRef(false);
+  const last = useRef({ x: 0, y: 0 });
+
+  const onMove = (e) => {
+    if (!dragging.current) return;
+    const dx = e.clientX - last.current.x;
+    const dy = e.clientY - last.current.y;
+    last.current.x = e.clientX;
+    last.current.y = e.clientY;
+    const k = 0.014;
+    if (groupRef.current) {
+      groupRef.current.rotation.y += dx * k;
+      groupRef.current.rotation.x += dy * k * 0.6;
+    }
+    velY.current = dx * k * 60;
+    velX.current = dy * k * 0.6 * 60;
+  };
+  const endDrag = () => {
+    dragging.current = false;
+    document.body.style.cursor = hovered ? "grab" : "auto";
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", endDrag);
+  };
+  const startDrag = (e) => {
+    e.stopPropagation();
+    dragging.current = true;
+    const ne = e.nativeEvent || e;
+    last.current.x = ne.clientX ?? 0;
+    last.current.y = ne.clientY ?? 0;
+    velY.current = 0;
+    velX.current = 0;
+    document.body.style.cursor = "grabbing";
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", endDrag);
+  };
+  const onOver = (e) => {
+    e.stopPropagation();
+    setHovered(true);
+    if (!dragging.current) document.body.style.cursor = "grab";
+  };
+  const onOut = (e) => {
+    e.stopPropagation();
+    setHovered(false);
+    if (!dragging.current) document.body.style.cursor = "auto";
+  };
 
   useFrame((state, delta) => {
     target.current.x += (pointer.x - target.current.x) * Math.min(delta * 1.2, 1);
     target.current.y += (pointer.y - target.current.y) * Math.min(delta * 1.2, 1);
+
+    const hoverTarget = hovered || dragging.current ? 1 : 0;
+    hoverF.current += (hoverTarget - hoverF.current) * Math.min(delta * 6, 1);
+
     if (groupRef.current) {
-      groupRef.current.rotation.y += delta * speed;
-      groupRef.current.rotation.x = baseRot[0] + target.current.y * 0.15;
+      if (!dragging.current) {
+        // idle spin (a touch faster on hover)
+        groupRef.current.rotation.y += delta * (speed + hoverF.current * 0.5);
+        // momentum from a flick, then friction
+        groupRef.current.rotation.y += velY.current * delta;
+        groupRef.current.rotation.x += velX.current * delta;
+        const friction = Math.pow(0.94, delta * 60);
+        velY.current *= friction;
+        velX.current *= friction;
+        if (Math.abs(velY.current) < 0.0008) velY.current = 0;
+        if (Math.abs(velX.current) < 0.0008) velX.current = 0;
+        // gentle return toward the base tilt when not being flung
+        if (Math.abs(velX.current) < 0.02) {
+          const tiltX = baseRot[0] + target.current.y * 0.15;
+          groupRef.current.rotation.x +=
+            (tiltX - groupRef.current.rotation.x) * Math.min(delta * 2.0, 1);
+        }
+      }
+
+      const sc = 1 + hoverF.current * 0.06;
+      groupRef.current.scale.set(sc, sc, sc);
+    }
+
+    // glow on hover / while spinning fast
+    const spinGlow = Math.min(Math.abs(velY.current) * 0.5, 2.0);
+    fresnelMat.uniforms.uIntensity.value = 1.7 + hoverF.current * 1.2 + spinGlow * 0.9;
+    if (lightRef.current) {
+      lightRef.current.intensity = 0.9 + hoverF.current * 1.2 + spinGlow;
     }
   });
 
   return (
     <group ref={groupRef} rotation={baseRot}>
-      {/* Main faceted black-glass body */}
-      <mesh>
+      {/* Main faceted black-glass body — grab + drag this to spin it. */}
+      <mesh onPointerOver={onOver} onPointerOut={onOut} onPointerDown={startDrag}>
         <VariantGeometry variant={variant} />
         <meshPhysicalMaterial
           color={"#06060a"}
@@ -168,7 +243,7 @@ function StepMesh({ variant }) {
       </mesh>
 
       {/* Inner violet point light — subtle inner glow */}
-      <pointLight position={[0, 0, 0]} intensity={0.9} color={"#8B5CF6"} distance={1.6} decay={2} />
+      <pointLight ref={lightRef} position={[0, 0, 0]} intensity={0.9} color={"#8B5CF6"} distance={1.6} decay={2} />
     </group>
   );
 }

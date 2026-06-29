@@ -44,7 +44,7 @@ function FaqRow({ item, idx }) {
   return (
     <div
       data-testid={`faq-row-${item.id}`}
-      className="border-t border-white/[0.08]"
+      className="premium-row border-t border-white/[0.08] px-4 -mx-4 rounded-sm"
     >
       <button
         type="button"

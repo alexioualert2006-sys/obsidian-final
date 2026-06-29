@@ -52,16 +52,15 @@ const TIERS = [
   {
     id: "retainer",
     name: "Retainer",
-    price: "€1,500",
+    price: "€40",
     cadence: "/mo",
     blurb:
-      "We maintain and grow your presence. Ongoing strategy, design, and development.",
+      "A light care plan that keeps your site online, backed up, and up to date.",
     features: [
-      "Ongoing design & development",
-      "Monthly strategy session",
-      "Priority response within 24h",
-      "Analytics & performance reports",
-      "Unlimited small updates",
+      "Hosting & uptime monitoring",
+      "Monthly backups",
+      "Small content & text updates",
+      "Email support",
     ],
     popular: false,
   },
@@ -91,7 +90,7 @@ function TierCard({ tier, idx }) {
     <article
       ref={ref}
       data-testid={`pricing-tier-${tier.id}`}
-      className={`group relative flex flex-col h-full p-8 md:p-9 border transition-all duration-[1200ms] ease-out ${
+      className={`group premium-card relative flex flex-col h-full p-8 md:p-9 border transition-all duration-[1200ms] ease-out ${
         tier.popular
           ? "border-[#8B5CF6]/45"
           : "border-white/[0.08] hover:border-white/20"

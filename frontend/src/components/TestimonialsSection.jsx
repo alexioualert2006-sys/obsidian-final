@@ -45,7 +45,7 @@ function VoiceCard({ voice, idx }) {
     <article
       ref={ref}
       data-testid={`voice-${voice.id}`}
-      className={`group relative flex flex-col h-full pt-10 md:pt-12 pr-6 transition-all duration-[1200ms] ease-out ${
+      className={`group premium-soft relative flex flex-col h-full pt-10 md:pt-12 px-5 md:px-6 -mx-5 md:-mx-6 transition-all duration-[1200ms] ease-out ${
         visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"
       }`}
       style={{ transitionDelay: `${idx * 120}ms` }}
